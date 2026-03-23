@@ -18,7 +18,7 @@ export function middleware(req: NextRequest) {
   }
 
   const session = req.cookies.get('abt_session')?.value
-  const adminPassword = process.env.ADMIN_PASSWORD
+  const adminPassword = (process.env.ADMIN_PASSWORD ?? '').trim()
 
   if (!adminPassword || session !== adminPassword) {
     const loginUrl = new URL('/login', req.url)
