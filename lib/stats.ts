@@ -1,5 +1,5 @@
 // Calcul statistique pour les tests A/B
-// Utilise un Z-test sur les proportions (standard dans l'industrie)
+// Z-test sur les proportions (standard industrie)
 
 export type VariantStats = {
   variantId: string
@@ -8,9 +8,9 @@ export type VariantStats = {
   views: number
   conversions: number
   conversionRate: number
-  uplift: number | null       // % d'amélioration vs contrôle
-  confidence: number          // % de confiance statistique (ex: 95%)
-  isSignificant: boolean      // true si confidence >= 95%
+  uplift: number | null
+  confidence: number
+  isSignificant: boolean
   isWinner: boolean
 }
 
@@ -19,17 +19,13 @@ export type ExperimentResults = {
   totalConversions: number
   variants: VariantStats[]
   hasWinner: boolean
+  sampleSizeNeeded: number | null // visiteurs par variation pour 95% de confiance
+  daysToSignificance: number | null // estimation
 }
 
-// Approximation de la CDF de la loi normale
 function normalCDF(x: number): number {
-  const a1 =  0.254829592
-  const a2 = -0.284496736
-  const a3 =  1.421413741
-  const a4 = -1.453152027
-  const a5 =  1.061405429
-  const p  =  0.3275911
-
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741
+  const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911
   const sign = x < 0 ? -1 : 1
   x = Math.abs(x) / Math.sqrt(2)
   const t = 1.0 / (1.0 + p * x)
@@ -37,22 +33,22 @@ function normalCDF(x: number): number {
   return 0.5 * (1.0 + sign * y)
 }
 
-// Z-test sur deux proportions
-function zTest(
-  controlConversions: number,
-  controlViews: number,
-  variantConversions: number,
-  variantViews: number
-): number {
-  if (controlViews === 0 || variantViews === 0) return 0
+function zTest(cc: number, cv: number, vc: number, vv: number): number {
+  if (cv === 0 || vv === 0) return 0
+  const p1 = cc / cv, p2 = vc / vv
+  const pooled = (cc + vc) / (cv + vv)
+  const se = Math.sqrt(pooled * (1 - pooled) * (1 / cv + 1 / vv))
+  return se === 0 ? 0 : (p2 - p1) / se
+}
 
-  const p1 = controlConversions / controlViews
-  const p2 = variantConversions / variantViews
-  const pooled = (controlConversions + variantConversions) / (controlViews + variantViews)
-  const se = Math.sqrt(pooled * (1 - pooled) * (1 / controlViews + 1 / variantViews))
-
-  if (se === 0) return 0
-  return (p2 - p1) / se
+// Calcul du sample size nécessaire (formule de Lehr)
+function sampleSizeNeeded(baseRate: number, minDetectableEffect: number = 0.05): number {
+  if (baseRate <= 0 || baseRate >= 1) return 0
+  const targetRate = baseRate * (1 + minDetectableEffect)
+  const p1 = baseRate, p2 = targetRate
+  // Formule standard pour α=0.05, puissance=0.80
+  const n = (Math.pow(1.96 + 0.84, 2) * (p1 * (1 - p1) + p2 * (1 - p2))) / Math.pow(p2 - p1, 2)
+  return Math.ceil(n)
 }
 
 export function computeResults(
@@ -62,7 +58,8 @@ export function computeResults(
     is_control: boolean
     views: number
     conversions: number
-  }>
+  }>,
+  dailyVisitorsPerVariant?: number
 ): ExperimentResults {
   const control = rawVariants.find(v => v.is_control)
   const totalViews = rawVariants.reduce((s, v) => s + v.views, 0)
@@ -77,7 +74,6 @@ export function computeResults(
     if (control && !v.is_control && control.views > 0) {
       const controlRate = control.views > 0 ? control.conversions / control.views : 0
       uplift = controlRate > 0 ? ((conversionRate - controlRate) / controlRate) * 100 : null
-
       const z = zTest(control.conversions, control.views, v.conversions, v.views)
       const pValue = 2 * (1 - normalCDF(Math.abs(z)))
       confidence = Math.min((1 - pValue) * 100, 99.9)
@@ -85,30 +81,36 @@ export function computeResults(
     }
 
     return {
-      variantId: v.id,
-      name: v.name,
-      isControl: v.is_control,
-      views: v.views,
-      conversions: v.conversions,
-      conversionRate,
-      uplift,
-      confidence,
-      isSignificant,
-      isWinner: false,
+      variantId: v.id, name: v.name, isControl: v.is_control,
+      views: v.views, conversions: v.conversions, conversionRate,
+      uplift, confidence, isSignificant, isWinner: false,
     }
   })
 
-  // Marquer le gagnant (la meilleure variation significative)
+  // Gagnant = meilleure variation significative avec uplift positif
   const significantVariants = variants.filter(v => !v.isControl && v.isSignificant && (v.uplift ?? 0) > 0)
   if (significantVariants.length > 0) {
-    const winner = significantVariants.sort((a, b) => (b.uplift ?? 0) - (a.uplift ?? 0))[0]
-    winner.isWinner = true
+    significantVariants.sort((a, b) => (b.uplift ?? 0) - (a.uplift ?? 0))[0].isWinner = true
+  }
+
+  // Sample size nécessaire
+  let sampleSizeNeededVal: number | null = null
+  let daysToSignificance: number | null = null
+
+  if (control && control.views > 30) {
+    const controlRate = control.conversions / control.views
+    sampleSizeNeededVal = sampleSizeNeeded(controlRate)
+
+    if (dailyVisitorsPerVariant && dailyVisitorsPerVariant > 0) {
+      const remaining = Math.max(0, sampleSizeNeededVal - (control.views / rawVariants.length))
+      daysToSignificance = Math.ceil(remaining / dailyVisitorsPerVariant)
+    }
   }
 
   return {
-    totalViews,
-    totalConversions,
-    variants,
+    totalViews, totalConversions, variants,
     hasWinner: variants.some(v => v.isWinner),
+    sampleSizeNeeded: sampleSizeNeededVal,
+    daysToSignificance,
   }
 }
