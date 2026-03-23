@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
+export const dynamic = 'force-dynamic'
+
 // POST /api/track
 // Reçoit les événements envoyés par le snippet (vues + conversions)
 export async function POST(req: NextRequest) {

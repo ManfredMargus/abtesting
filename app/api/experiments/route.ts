@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
+export const dynamic = 'force-dynamic'
+
 // GET /api/experiments?siteId=XXX
 export async function GET(req: NextRequest) {
   const siteId = req.nextUrl.searchParams.get('siteId')

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+
+export const dynamic = 'force-dynamic'
 import { computeResults } from '@/lib/stats'
 
 // GET /api/experiments/[id] — détail + résultats statistiques
