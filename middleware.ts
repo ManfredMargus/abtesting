@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const PUBLIC_PATHS = [
   '/login',
+  '/api/auth',
   '/api/config',
   '/api/track',
   '/api/debug',
