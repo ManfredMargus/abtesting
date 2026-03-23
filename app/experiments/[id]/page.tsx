@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { computeResults } from '@/lib/stats'
 import { notFound } from 'next/navigation'
 import StatusButton from './StatusButton'
 
@@ -12,12 +13,33 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
 }
 
 async function getData(id: string) {
-  const res = await fetch(
-    `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/experiments/${id}`,
-    { cache: 'no-store' }
-  )
-  if (!res.ok) return null
-  return res.json()
+  const { data: experiment, error } = await supabase
+    .from('experiments')
+    .select('*, site:sites(name, domain), variants(*)')
+    .eq('id', id)
+    .single()
+
+  if (error || !experiment) return null
+
+  const { data: events } = await supabase
+    .from('events')
+    .select('variant_id, event_type')
+    .eq('experiment_id', id)
+
+  const counts: Record<string, { views: number; conversions: number }> = {}
+  for (const ev of (events ?? [])) {
+    if (!counts[ev.variant_id]) counts[ev.variant_id] = { views: 0, conversions: 0 }
+    if (ev.event_type === 'view') counts[ev.variant_id].views++
+    if (ev.event_type === 'conversion') counts[ev.variant_id].conversions++
+  }
+
+  const variantsWithStats = (experiment.variants ?? []).map((v: { id: string; name: string; is_control: boolean }) => ({
+    ...v,
+    views: counts[v.id]?.views ?? 0,
+    conversions: counts[v.id]?.conversions ?? 0,
+  }))
+
+  return { ...experiment, results: computeResults(variantsWithStats) }
 }
 
 export default async function ExperimentPage({ params }: { params: { id: string } }) {
@@ -85,9 +107,7 @@ export default async function ExperimentPage({ params }: { params: { id: string 
           <div
             key={v.variantId}
             className={`bg-white rounded-xl border p-5 ${
-              v.isWinner
-                ? 'border-green-400 ring-1 ring-green-400'
-                : 'border-gray-200'
+              v.isWinner ? 'border-green-400 ring-1 ring-green-400' : 'border-gray-200'
             }`}
           >
             <div className="flex items-center justify-between mb-3">
@@ -97,9 +117,7 @@ export default async function ExperimentPage({ params }: { params: { id: string 
                   <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">Contrôle</span>
                 )}
                 {v.isWinner && (
-                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                    Gagnant
-                  </span>
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Gagnant</span>
                 )}
               </div>
               {!v.isControl && v.views > 0 && (
@@ -133,12 +151,11 @@ export default async function ExperimentPage({ params }: { params: { id: string 
               </div>
             </div>
 
-            {/* Barre de conversion */}
             {v.views > 0 && (
               <div className="mt-3">
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${v.isWinner ? 'bg-green-500' : 'bg-brand-500'}`}
+                    className={`h-full rounded-full ${v.isWinner ? 'bg-green-500' : 'bg-brand-500'}`}
                     style={{ width: `${Math.min(v.conversionRate * 100 * 5, 100)}%` }}
                   />
                 </div>
@@ -146,15 +163,13 @@ export default async function ExperimentPage({ params }: { params: { id: string 
             )}
 
             {!v.isControl && !v.isSignificant && v.views > 0 && (
-              <p className="text-xs text-gray-400 mt-2">
-                Pas encore assez de données pour conclure. Continue le test.
-              </p>
+              <p className="text-xs text-gray-400 mt-2">Pas encore assez de données pour conclure.</p>
             )}
           </div>
         ))}
       </div>
 
-      {/* Objectif */}
+      {/* Config */}
       <div className="mt-6 bg-white rounded-xl border border-gray-200 p-5">
         <h3 className="font-medium mb-2">Configuration</h3>
         <div className="text-sm text-gray-600 space-y-1">
