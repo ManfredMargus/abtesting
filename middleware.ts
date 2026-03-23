@@ -4,6 +4,7 @@ const PUBLIC_PATHS = [
   '/login',
   '/api/config',
   '/api/track',
+  '/api/debug',
   '/snippet.js',
   '/_next',
   '/favicon',
